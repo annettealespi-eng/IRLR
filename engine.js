@@ -37,19 +37,81 @@
   function makeApplicationId(){return'APP-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8).toUpperCase()}
   function normalizeParticipantId(v){return String(v||'').trim().replace(/\s+/g,' ').toLocaleLowerCase('es-MX')}
   function normalizeEmail(v){return String(v||'').trim().toLocaleLowerCase('es-MX')}
-  function hasParticipantInSession(participantId,ctx){const n=normalizeParticipantId(participantId);return !!n&&Data.get(ctx).some(r=>r.valid!==false&&normalizeParticipantId(r.participantId)===n)}
-  function hasEmailInSession(email,ctx){const n=normalizeEmail(email);return !!n&&Data.get(ctx).some(r=>r.valid!==false&&normalizeEmail(r.email)===n)}
+  async function hasParticipantInSession(participantId,ctx){const n=normalizeParticipantId(participantId);if(!n)return false;const rows=await Data.get(ctx);return rows.some(r=>r.valid!==false&&normalizeParticipantId(r.participantId)===n)}
+  async function hasEmailInSession(email,ctx){const n=normalizeEmail(email);if(!n)return false;const rows=await Data.get(ctx);return rows.some(r=>r.valid!==false&&normalizeEmail(r.email)===n)}
+  const SUPABASE_URL='https://batqznpfiermwamovrcf.supabase.co';
+  const SUPABASE_PUBLISHABLE_KEY='sb_publishable_Crms5r35efue1WAsPIrYew_hgiHWdWe';
+  async function rpc(functionName,body){
+    const response=await fetch(SUPABASE_URL+'/rest/v1/rpc/'+functionName,{method:'POST',headers:{'Content-Type':'application/json','apikey':SUPABASE_PUBLISHABLE_KEY,'Authorization':'Bearer '+SUPABASE_PUBLISHABLE_KEY},body:JSON.stringify(body)});
+    const text=await response.text();
+    if(!response.ok){let message=text;try{const j=JSON.parse(text);message=j.message||j.hint||j.details||text}catch(e){}throw new Error(message||('Error al ejecutar '+functionName+'.'));}
+    if(!text)return null;try{return JSON.parse(text)}catch(e){return text}
+  }
+  function toDbRecord(record,calc){
+    return {
+      p_assessment_id:record.assessmentId,
+      p_application_id:record.applicationId,
+      p_participant_id:record.participantId,
+      p_participant_name:record.participantName||record.participantId,
+      p_email:normalizeEmail(record.email),
+      p_organization_id:record.organizationId,
+      p_group_id:record.groupId,
+      p_session_id:record.sessionId,
+      p_instrument_version:record.instrumentVersion,
+      p_i01:record.responses[0],p_i02:record.responses[1],p_i03:record.responses[2],p_i04:record.responses[3],
+      p_i05:record.responses[4],p_i06:record.responses[5],p_i07:record.responses[6],p_i08:record.responses[7],
+      p_i09:record.responses[8],p_i10:record.responses[9],p_i11:record.responses[10],p_i12:record.responses[11],
+      p_irlr_total:calc.total,
+      p_nivel_global:calc.level,
+      p_d1_score:calc.domains.D1.score,p_d1_level:calc.domains.D1.level,p_d1_exposure:calc.domains.D1.exposure,
+      p_d2_score:calc.domains.D2.score,p_d2_level:calc.domains.D2.level,p_d2_exposure:calc.domains.D2.exposure,
+      p_d3_score:calc.domains.D3.score,p_d3_level:calc.domains.D3.level,p_d3_exposure:calc.domains.D3.exposure,
+      p_d4_score:calc.domains.D4.score,p_d4_level:calc.domains.D4.level,p_d4_exposure:calc.domains.D4.exposure,
+      p_highest_exposure_domains:calc.highestExposureDomains.map(k=>calc.domains[k].name).join(' | '),
+      p_co_predominance:calc.highestExposureDomains.length>1,
+      p_top_3_indicators:calc.principalIndicators.map(x=>x.name).join(' | '),
+      p_valid:record.valid!==false
+    };
+  }
+  function fromDbRow(row){
+    const responses=[row.i01,row.i02,row.i03,row.i04,row.i05,row.i06,row.i07,row.i08,row.i09,row.i10,row.i11,row.i12].map(Number);
+    return {
+      assessmentId:row.assessment_id,applicationId:row.application_id,participantId:row.participant_id,
+      participantName:row.participant_name||row.participant_id,email:row.email,organizationId:row.organization_id,
+      groupId:row.group_id,sessionId:row.session_id,instrumentVersion:row.instrument_version,
+      timestamp:row.created_at||row.timestamp,responses,
+      IRLR_total:Number(row.irlr_total),nivel_global:row.nivel_global,
+      domain_D1_score:Number(row.d1_score),domain_D1_level:row.d1_level,domain_D1_exposure:Number(row.d1_exposure),
+      domain_D2_score:Number(row.d2_score),domain_D2_level:row.d2_level,domain_D2_exposure:Number(row.d2_exposure),
+      domain_D3_score:Number(row.d3_score),domain_D3_level:row.d3_level,domain_D3_exposure:Number(row.d3_exposure),
+      domain_D4_score:Number(row.d4_score),domain_D4_level:row.d4_level,domain_D4_exposure:Number(row.d4_exposure),
+      highest_exposure_domains:typeof row.highest_exposure_domains==='string'&&row.highest_exposure_domains?row.highest_exposure_domains.split(' | '):[],
+      co_predominance:!!row.co_predominance,
+      top_3_indicators:typeof row.top_3_indicators==='string'&&row.top_3_indicators?row.top_3_indicators.split(' | '):[],
+      valid:row.valid!==false
+    };
+  }
   const Data={
-    save(record){
-      const all=JSON.parse(localStorage.getItem('IRLR_ASSESSMENTS_V12')||'[]');
-      const ctx={applicationId:record.applicationId,organizationId:record.organizationId,groupId:record.groupId,sessionId:record.sessionId};
-      if(hasEmailInSession(record.email,ctx))throw new Error('Este correo ya tiene un cuestionario registrado en esta aplicación/sesión.');
+    async save(record){
       const calc=calculateIndividual(record.responses);
-      const stored={...record,IRLR_total:calc.total,nivel_global:calc.level,domain_D1_score:calc.domains.D1.score,domain_D1_level:calc.domains.D1.level,domain_D1_exposure:calc.domains.D1.exposure,domain_D2_score:calc.domains.D2.score,domain_D2_level:calc.domains.D2.level,domain_D2_exposure:calc.domains.D2.exposure,domain_D3_score:calc.domains.D3.score,domain_D3_level:calc.domains.D3.level,domain_D3_exposure:calc.domains.D3.exposure,domain_D4_score:calc.domains.D4.score,domain_D4_level:calc.domains.D4.level,domain_D4_exposure:calc.domains.D4.exposure,highest_exposure_domains:calc.highestExposureDomains.map(k=>calc.domains[k].name),co_predominance:calc.highestExposureDomains.length>1,top_3_indicators:calc.principalIndicators.map(x=>x.name),valid:record.valid!==false};
-      all.push(stored);localStorage.setItem('IRLR_ASSESSMENTS_V12',JSON.stringify(all));return stored;
+      try{await rpc('submit_irlr_assessment',toDbRecord(record,calc))}
+      catch(err){
+        if(String(err.message||'').toLowerCase().includes('duplicate')||String(err.message||'').toLowerCase().includes('correo'))throw new Error('Este correo ya tiene un cuestionario registrado en esta aplicación/sesión.');
+        throw err;
+      }
+      const stored={...record,participantName:record.participantName||record.participantId,IRLR_total:calc.total,nivel_global:calc.level,domain_D1_score:calc.domains.D1.score,domain_D1_level:calc.domains.D1.level,domain_D1_exposure:calc.domains.D1.exposure,domain_D2_score:calc.domains.D2.score,domain_D2_level:calc.domains.D2.level,domain_D2_exposure:calc.domains.D2.exposure,domain_D3_score:calc.domains.D3.score,domain_D3_level:calc.domains.D3.level,domain_D3_exposure:calc.domains.D3.exposure,domain_D4_score:calc.domains.D4.score,domain_D4_level:calc.domains.D4.level,domain_D4_exposure:calc.domains.D4.exposure,highest_exposure_domains:calc.highestExposureDomains.map(k=>calc.domains[k].name),co_predominance:calc.highestExposureDomains.length>1,top_3_indicators:calc.principalIndicators.map(x=>x.name),valid:record.valid!==false};
+      return stored;
     },
-    get(filter={}){const all=JSON.parse(localStorage.getItem('IRLR_ASSESSMENTS_V12')||'[]');return all.filter(r=>(!filter.applicationId||r.applicationId===filter.applicationId)&&(!filter.organizationId||r.organizationId===filter.organizationId)&&(!filter.groupId||r.groupId===filter.groupId)&&(!filter.sessionId||r.sessionId===filter.sessionId)&&(!filter.instrumentVersion||r.instrumentVersion===filter.instrumentVersion));},
-    all(){return JSON.parse(localStorage.getItem('IRLR_ASSESSMENTS_V12')||'[]')},clear(){localStorage.removeItem('IRLR_ASSESSMENTS_V12')}
+    async get(filter={}){
+      if(filter.applicationId){const rows=await rpc('get_irlr_session_assessments',{p_application_id:filter.applicationId});return (Array.isArray(rows)?rows:[]).map(fromDbRow).filter(r=>(!filter.organizationId||r.organizationId===filter.organizationId)&&(!filter.groupId||r.groupId===filter.groupId)&&(!filter.sessionId||r.sessionId===filter.sessionId)&&(!filter.instrumentVersion||r.instrumentVersion===filter.instrumentVersion));}
+      if(filter.organizationId){const rows=await rpc('get_irlr_organization_assessments',{p_organization_id:filter.organizationId});return (Array.isArray(rows)?rows:[]).map(fromDbRow).filter(r=>(!filter.groupId||r.groupId===filter.groupId)&&(!filter.sessionId||r.sessionId===filter.sessionId)&&(!filter.instrumentVersion||r.instrumentVersion===filter.instrumentVersion));}
+      return [];
+    },
+    async all(){const rows=await rpc('get_irlr_organization_assessments',{p_organization_id:''});return (Array.isArray(rows)?rows:[]).map(fromDbRow)},
+    async hasEmailInSession(email,ctx){const rows=await this.get(ctx);const n=normalizeEmail(email);return !!n&&rows.some(r=>r.valid!==false&&normalizeEmail(r.email)===n)},
+    clear(){return Promise.resolve()}
   };
-  window.IRLREngine={QUESTIONS,SCALE,DOMAINS,VERSIONS,GLOBAL_INTERPRETATIONS,calculateIndividual,calculateGroup,getVersion,contextFromUrl,validContext,makeAssessmentId,makeApplicationId,normalizeParticipantId,normalizeEmail,hasParticipantInSession,hasEmailInSession};window.IRLRData=Data;
+  async function hasEmailInSessionRemote(email,ctx){return Data.hasEmailInSession(email,ctx)}
+  async function createApplication(app){return rpc('create_irlr_application',{p_application_id:app.applicationId,p_organization_id:app.organizationId,p_group_id:app.groupId,p_session_id:app.sessionId,p_instrument_version:app.instrumentVersion})}
+  window.IRLREngine={QUESTIONS,SCALE,DOMAINS,VERSIONS,GLOBAL_INTERPRETATIONS,calculateIndividual,calculateGroup,getVersion,contextFromUrl,validContext,makeAssessmentId,makeApplicationId,normalizeParticipantId,normalizeEmail,hasParticipantInSession,hasEmailInSession,hasEmailInSessionRemote,createApplication,SUPABASE_URL};window.IRLRData=Data;
 })();

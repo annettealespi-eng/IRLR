@@ -1,4 +1,4 @@
-IRLR · Etapa 3.1 · Revision 8
+IRLR · Etapa 3.2 · Capa de datos multidispositivo · Revision 11
 
 Incluye:
 - Experiencia participante y facilitador.
@@ -11,7 +11,7 @@ Incluye:
 - Exportación CSV de sesión y de base completa con respuestas, resultados por dominio, dominio(s) de mayor exposición, co-predominancia e indicadores principales.
 
 Nota de prototipo:
-La persistencia utiliza localStorage del navegador. Esto permite validar el flujo funcional, pero no constituye una arquitectura de producción multiusuario ni un control de seguridad real. Para producción, el repositorio, autenticación, roles y unicidad deberán trasladarse a un backend/base de datos.
+La persistencia de respuestas utiliza Supabase como base central multidispositivo. La clave incluida en el navegador es únicamente la Publishable key. El prototipo de campo aún no constituye una arquitectura de producción con autenticación y control de acceso individual del facilitador; esa capa se implementará después de validar la experiencia de campo.
 
 Archivos:
 - configuracion.html
